@@ -49,4 +49,26 @@ edx<-edx%>%mutate(year_released= as.numeric(str_match(title,pattern_year_release
 edx<-edx%>%mutate(date_time_rated=as.POSIXct(timestamp, origin="1970-01-01"),year_rated=year(date_time_rated))
 edx<-edx%>%mutate(movieId=as.factor(movieId),userId=as.factor(userId))
 
+# calculating average user rating and average movie rating
+avg_user_rating_df<-edx%>%group_by(userId)%>%summarise(avg_user_rating=round(mean(rating),digits=3))
+edx<-edx%>%left_join(avg_user_rating_df,by="userId")
+avg_movie_rating_df<-edx%>%group_by(movieId)%>%summarise(avg_movie_rating=round(mean(rating),digits=3))
+edx<-edx%>%left_join(avg_movie_rating_df,by="movieId")
 
+#partition edx dataset
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index_edx <- createDataPartition(y = edx$rating, times = 1, p = 0.5, list = FALSE)
+test_set <- edx[test_index_edx,]
+train_set <- edx[-test_index_edx,]
+
+#RMSE function
+RMSE<-function(predicted_ratings,actual_ratings){
+  sqrt(mean((predicted_ratings-actual_ratings)^2))
+}
+
+
+fit<- train(rating~avg_movie_rating+avg_user_rating+year_released+year_rated,data = train_set,method='rf')
+y_hat<-predict(fit,test_set)
+
+RMSE(y_hat,test_set$rating)
