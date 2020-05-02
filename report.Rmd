@@ -1,0 +1,139 @@
+---
+title: "Movielens Project Report"
+author: "Puneeth Nikin Krishnan"
+date: "30/04/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Executive Summary
+
+The objective of this project is to develop a recommendation system based on the movielens Dataset. To achieve this ratings need to be predicted for a user based on past ratings. The goal here is to accurately predict ratings. To be able to gauge the performance of different models RMSE (Root Mean Square Error) will be used. The dataset has been split into two for training(edx) and testing(validation) our model. The validation set will not be used except to validate the best performing model. The training set will be further split into a train set and a test set to identify the best model. The best model will be one which has the least RMSE. The steps followed to build this model are first importing the dataset, exploring or analysing and preparing the dataset, building the models, choosing the best model and finally validating the results on the bvalidation set.
+
+### Importing the Dataset
+The code to import the dataset has been proveded by edx. 
+https://courses.edx.org/login?next=/courses/course-v1%3AHarvardX%2BPH125.9x%2B1T2020/courseware/dd9a048b16ca477a8f0aaf1d888f0734/e8800e37aa444297a3a2f35bf84ce452/%3Fchild%3Dlast
+
+```{r import data,message = FALSE,warning = FALSE, echo = FALSE}
+################################
+# Create edx set, validation set
+################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+```
+
+Running the code will give us two dataframes namely edx and validation. The edx dataframe will be used to build our model.
+```{r libraries,echo=FALSE,message = FALSE,warning = FALSE} 
+library(caret)
+library(tidyverse)
+if(!require(lubridate)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+library(lubridate)
+```
+
+### Exploring and Preparing the Dataset
+```{r}
+dim(edx)
+```
+
+We notice that the dataset is pretty huge with 9,000,055 rows and 6 columns
+
+```{r message = FALSE,warning = FALSE}
+names(edx)
+edx%>%head()
+```
+
+The edx dataframe comprises of 5 columns. 'userId' represents the unique user ID, 'movieId' represents the unique ID for each movie, timestamp denotes the time of the rating, title represents title and genres the combination of genres.
+
+We can notice that the title section contains the year the movie was released in. We will use regex to extract the year released from this column. The regex pattern used to extract the data is "(\\d{4})\\)$" . This can be  evidenced by the fact that the year is at the end of  the string in column title. We seperate  the   
+
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+# extracting the year released from the title column
+regex_pattern<-"(\\d{4})\\)$"
+edx<-edx%>%mutate(year_released=year(as.Date(str_match(title,regex_pattern)[,2],format="%Y")))
+edx%>%head()%>% knitr::kable(caption = "Year extracted from column 'title'")
+```
+
+We can convert the timestamp column to a readable datetime object.
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+# converting the timestamp column to readable date
+edx <- edx%>%mutate(datetime=as_datetime(timestamp))
+edx%>%head()%>% knitr::kable(caption = "timestamp column to a readable datetime object")
+```
+
+## Exploring the relationship between ratings and the year the movie was released
+
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+#exploring relation between ratings and the year movie was released
+
+edx%>%group_by(year_released)%>%summarise(avg_ratings=mean(rating))%>%ggplot(aes(year_released,avg_ratings))+geom_point()+geom_smooth(method = "loess")+theme(axis.text.x = element_text(angle = 90,hjust = 1))
+
+```
+
+The plot shows that there is a clear dip in ratings for movies that were released after the late 1980s. There could be a relationship between the year released and the ratings as there are two clear clusters.
+
+## Exploring the relationship between ratings and when the movie was rated
+
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+edx%>%mutate(week_rated=round_date(datetime,unit = 'week'))%>%group_by(week_rated)%>%summarise(avg_rating=mean(rating))%>%ggplot(aes(week_rated,avg_rating))+geom_point()+geom_smooth(method="loess")
+```
+The relationship does not seem to be strong between the year as a predictor and ratings. 
+
+## Exploring the relationship between ratings and different genres.
+```{r message = FALSE,warning = FALSE}
+unique(unlist(str_split(as.vector(unique(edx$genres)),"\\|")))
+length(unique(edx$genres))
+```
+There are 20 unique genres and 797 unique combination of these genres(including "(no genres listed)")
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+edx%>%group_by(genres)%>%summarise(avg_ratings=mean(rating))%>%top_n(10,avg_ratings) %>% knitr::kable(caption = "Top 10 genres by rating")
+
+```
+
+```{r  echo=FALSE,message = FALSE,warning = FALSE}
+edx%>%group_by(genres)%>%summarise(avg_ratings=mean(rating),n_ratings=n())%>%top_n(10,n_ratings)%>%knitr::kable(caption = "Top 10 genres by number of ratings")
+```
+
