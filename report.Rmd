@@ -87,21 +87,19 @@ edx%>%head()
 ```
 
 The edx dataframe comprises of 5 columns. 'userId' represents the unique user ID, 'movieId' represents the unique ID for each movie, timestamp denotes the time of the rating, title represents title and genres the combination of genres.
+Each row represents one rating by a user.
+We can notice that the title section contains the year the movie was released in. We will use regex to extract the year released from this column. The regex pattern used to extract the data is "(\\d{4})\\)$" . This can be  evidenced by the fact that the year is at the end of  the string in column title. We use the str_match() function  from the stringr package to  extract the year and convert to a date format using  the as.date() and year() functions from the  lubridate package.
 
-We can notice that the title section contains the year the movie was released in. We will use regex to extract the year released from this column. The regex pattern used to extract the data is "(\\d{4})\\)$" . This can be  evidenced by the fact that the year is at the end of  the string in column title. We seperate  the   
-
-```{r echo=FALSE,message = FALSE,warning = FALSE}
+```{r message = FALSE,warning = FALSE}
 # extracting the year released from the title column
 regex_pattern<-"(\\d{4})\\)$"
 edx<-edx%>%mutate(year_released=year(as.Date(str_match(title,regex_pattern)[,2],format="%Y")))
-edx%>%head()%>% knitr::kable(caption = "Year extracted from column 'title'")
 ```
 
 We can convert the timestamp column to a readable datetime object.
-```{r echo=FALSE,message = FALSE,warning = FALSE}
+```{r message = FALSE,warning = FALSE}
 # converting the timestamp column to readable date
 edx <- edx%>%mutate(datetime=as_datetime(timestamp))
-edx%>%head()%>% knitr::kable(caption = "timestamp column to a readable datetime object")
 ```
 
 ## Exploring the relationship between ratings and the year the movie was released
@@ -110,15 +108,17 @@ edx%>%head()%>% knitr::kable(caption = "timestamp column to a readable datetime 
 #exploring relation between ratings and the year movie was released
 
 edx%>%group_by(year_released)%>%summarise(avg_ratings=mean(rating))%>%ggplot(aes(year_released,avg_ratings))+geom_point()+geom_smooth(method = "loess")+theme(axis.text.x = element_text(angle = 90,hjust = 1))
+edx%>%group_by(year_released)%>%summarise(n_ratings=n())%>%ggplot(aes(year_released,n_ratings))+geom_point()+geom_smooth(method = "loess")+theme(axis.text.x = element_text(angle = 90,hjust = 1))
 
 ```
 
-The plot shows that there is a clear dip in ratings for movies that were released after the late 1980s. There could be a relationship between the year released and the ratings as there are two clear clusters.
+The plot shows that there is a clear dip in ratings for movies that were released after the late 1980s. There could be a relationship between the year released and the ratings as there are two clear clusters.The number of ratings also show that  post 1993 the number of ratings for movies shot up while also showinga  quick declining  pattern post that.
 
 ## Exploring the relationship between ratings and when the movie was rated
 
 ```{r echo=FALSE,message = FALSE,warning = FALSE}
 edx%>%mutate(week_rated=round_date(datetime,unit = 'week'))%>%group_by(week_rated)%>%summarise(avg_rating=mean(rating))%>%ggplot(aes(week_rated,avg_rating))+geom_point()+geom_smooth(method="loess")
+edx%>%mutate(week_rated=round_date(datetime,unit = 'week'))%>%group_by(week_rated)%>%summarise(n_rating=n())%>%ggplot(aes(week_rated,n_rating))+geom_point()+geom_smooth(method="loess")
 ```
 The relationship does not seem to be strong between the year as a predictor and ratings. 
 
@@ -136,4 +136,80 @@ edx%>%group_by(genres)%>%summarise(avg_ratings=mean(rating))%>%top_n(10,avg_rati
 ```{r  echo=FALSE,message = FALSE,warning = FALSE}
 edx%>%group_by(genres)%>%summarise(avg_ratings=mean(rating),n_ratings=n())%>%top_n(10,n_ratings)%>%knitr::kable(caption = "Top 10 genres by number of ratings")
 ```
+
+This shows that the most rated movies are not necessarily the best rated.
+```{r echo=FALSE,message = FALSE,warning = FALSE}
+edx%>%group_by(genres)%>%
+  summarise(avg_rating=mean(rating),se_rating=sd(rating)/sqrt(n()),n_ratings=n())%>%
+  top_n(15,n_ratings)%>%mutate(genres=reorder(genres,avg_rating))%>%
+  ggplot(aes(x=genres,y=avg_rating,ymin=avg_rating-(qnorm(0.975)*se_rating),
+             ymax=avg_rating+(qnorm(0.975)*se_rating)))+geom_errorbar()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  ggtitle("Error Bar plots Top rated genres vs average ratings")+ylab('rating')
+```
+As can be seen in this plot it is clear that  there is a definite distinction between the genres. From this analysis we can conclude that genres  have a relationship with ratings.
+
+## Exploring the relationship  between ratings and user
+
+```{r}
+edx%>%group_by(userId)%>%summarise(n_ratings=n())%>%ggplot(aes(x=n_ratings))+geom_histogram(bins=50,color='black')+scale_x_continuous(trans = 'log10')+ggtitle("Count vs users number of ratings")
+```
+This plot shows that the number of users who rate over a 1000 are very  less whereas the average user votes about 25 to 100 movies.
+
+## Exploring the relationship  between ratings and movie
+
+```{r}
+edx%>%group_by(movieId)%>%summarise(n_ratings=n())%>%
+  ggplot(aes(x=n_ratings))+geom_histogram(bins=50,color='black')+
+  scale_x_continuous(trans = 'log10')+
+  ggtitle("Count vs number of ratings for Movies")
+```
+
+This plot shows that some movies are rated way more often than others.
+
+## Inference from our Analysis
+1) Movies that were released before 1990s have a higher  rating than  movies that were released later.
+2) Some genres are more popular than others while some have a higher rating. 
+3) Some Users tend to be very active in rating while others are not. This could also  mean that some users tend to watch a lot of movies.
+4)Some movies are popular than others  and tend to have many more ratings. 
+
+The goal of  our model is to incorporate these findings in our model  to accurately predict  ratings.
+
+
+### Building the Model
+
+## RMSE
+Here we define a function to measure the performance  of the model
+```{r}
+RMSE <-  function(predicted_ratings,actual_ratings){
+  sqrt(mean((predicted_ratings-actual_ratings)^2))
+}
+```
+A tibble to  store all  our results
+```{r}
+results<-tibble()
+```
+
+## Split edx to train_set and  test_set
+```{r}
+#split edx to train and test set
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index<-createDataPartition(edx$rating,times=1,p=0.5,list=FALSE)
+test_set<-edx[test_index,]
+train_set<-edx[-test_index,]
+#ensuring the test set has same userId and movieId
+test_set <- test_set %>% semi_join(train_set, by = "movieId") %>% 
+  semi_join(train_set, by = "userId")
+```
+## simplest model
+```{r}
+mu<-mean(train_set$rating)
+result_simple_model<-RMSE(mu,test_set$rating)
+results<-data.frame(model='mean only',result=result_simple_model)
+```
+Here  we assume that all movies are rated equally and use the result as the base for our  upcoming models
+## Movie Effect b_i
+
+
 

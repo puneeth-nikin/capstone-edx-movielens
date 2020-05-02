@@ -110,3 +110,17 @@ result_movie_user_genre_effect<-RMSE(predictions_movie_user_genre_effect,test_se
 #Movie+user+genre+year_released effect model
 avg_ratings_year<-train_set%>%left_join(avg_ratings_movie,by='movieId')%>%left_join(avg_ratings_user,by='userId')%>%left_join(avg_ratings_genre,by='genres')%>%group_by(year_released)%>%summarise(b_t=mean(rating-mu-b_i-b_u-b_g))
 predictions_movie_user_genre_year_effect<-test_set%>%left_join(avg_ratings_movie,by='movieId')%>%left_join(avg_ratings_user,by='userId')%>%left_join(avg_ratings_genre,by='genres')%>%left_join(avg_ratings_year,by='year_released')%>%mutate(pred=mu+b_i+b_u+b_g+b_t)%>%pull(pred)
+result_movie_user_genre_effect<-RMSE(predictions_movie_user_genre_year_effect,test_set$rating)
+
+#Regularisation
+lambdas <- seq(0, 10, 0.5)
+rmses_regularised <- map(lambdas, function(lambda){
+  mu <- mean(train_set$rating)
+  avg_ratings_movie<-train_set%>%group_by(movieId)%>%summarise(b_i=sum(rating-mu)/(n()+lambda))
+  avg_ratings_user<-train_set%>%left_join(avg_ratings_movie,by='movieId')%>%group_by(userId)%>%summarise(b_u= sum(rating-mu-b_i)/(n()+lambda))
+  avg_ratings_genre<-train_set %>%left_join(avg_ratings_movie,by='movieId')%>%left_join(avg_ratings_user,by='userId')%>%group_by(genres)%>%summarise(b_g=sum(rating-mu-b_i-b_u)/(n()+lambda))
+  avg_ratings_year<-train_set%>%left_join(avg_ratings_movie,by='movieId')%>%left_join(avg_ratings_user,by='userId')%>%left_join(avg_ratings_genre,by='genres')%>%group_by(year_released)%>%summarise(b_t=sum(rating-mu-b_i-b_u-b_g)/(n()+lambda))
+  predictions<-test_set%>%left_join(avg_ratings_movie,by='movieId')%>%left_join(avg_ratings_user,by='userId')%>%left_join(avg_ratings_genre,by='genres')%>%left_join(avg_ratings_year,by='year_released')%>%mutate(pred=mu+b_i+b_u+b_g+b_t)%>%pull(pred)
+  RMSE(predictions,test_set$rating)
+})
+
